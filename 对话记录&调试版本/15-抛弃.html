@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频展台</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        #video-container {
+            position: fixed;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #video, #canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform-origin: center center;
+            transition: transform 0.1s ease;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #canvas {
+            display: none; /* 默认隐藏Canvas */
+        }
+
+        .toolbar {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            background: #2196F3;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:active {
+            background: #1976D2;
+        }
+
+        .locked {
+            background: #f44336 !important;
+        }
+
+        #fullscreen-prompt {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 18px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas> <!-- 用于定格画面 -->
+    </div>
+    <div class="toolbar">
+        <button id="rotateLeftBtn">左旋转</button>
+        <button id="rotateRightBtn">右旋转</button>
+        <button id="lockBtn">锁定</button>
+        <button id="resetBtn">复位</button>
+        <button id="fullscreenBtn">全屏</button>
+    </div>
+
+    <!-- 全屏提示 -->
+    <div id="fullscreen-prompt">
+        点击页面以进入全屏模式
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const container = document.getElementById('video-container');
+        const rotateLeftBtn = document.getElementById('rotateLeftBtn');
+        const rotateRightBtn = document.getElementById('rotateRightBtn');
+        const lockBtn = document.getElementById('lockBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        const fullscreenPrompt = document.getElementById('fullscreen-prompt');
+
+        let isLocked = false;
+        let currentScale = 1;
+        let currentX = 0;
+        let currentY = 0;
+        let currentRotation = 0;
+        let lastTouchDistance = null;
+        let isUsingCanvas = false; // 是否使用Canvas显示定格画面
+        let isFirstClick = true; // 是否是第一次点击
+
+        // 鼠标操作相关变量
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+
+        // 初始化摄像头
+        navigator.mediaDevices.getUserMedia({ video: { width: 2592, height: 1944 } })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(error => {
+                console.error('无法访问摄像头:', error);
+            });
+
+        // 用户点击页面后立即进入全屏（仅首次点击）
+        document.addEventListener('click', () => {
+            if (isFirstClick && !document.fullscreenElement) {
+                isFirstClick = false; // 标记为已点击
+                fullscreenPrompt.style.display = 'none'; // 隐藏提示
+                enterFullscreen(); // 立即进入全屏
+            }
+        });
+
+        // 15 秒未点击移除提示并禁用自动全屏
+        setTimeout(() => {
+            if (isFirstClick) {
+                isFirstClick = false; // 禁用自动全屏
+                fullscreenPrompt.style.display = 'none'; // 移除提示
+            }
+        }, 15000); // 15 秒
+
+        // 全屏按钮事件
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+
+        // 触摸事件处理
+        container.addEventListener('touchstart', handleTouchStart, { passive: false });
+        container.addEventListener('touchmove', handleTouchMove, { passive: false });
+        container.addEventListener('touchend', handleTouchEnd);
+
+        // 鼠标事件处理
+        container.addEventListener('mousedown', handleMouseDown);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        container.addEventListener('wheel', handleWheel, { passive: false });
+
+        // 按钮事件
+        rotateLeftBtn.addEventListener('click', () => rotateVideo(-90));
+        rotateRightBtn.addEventListener('click', () => rotateVideo(90));
+        lockBtn.addEventListener('click', toggleLock);
+        resetBtn.addEventListener('click', () => window.location.reload()); // 刷新页面
+
+        function handleTouchStart(e) {
+            if (isLocked) return;
+            if (e.touches.length === 1) {
+                // 记录初始位置
+                const touch = e.touches[0];
+                this.startX = touch.clientX - currentX;
+                this.startY = touch.clientY - currentY;
+            } else if (e.touches.length === 2) {
+                // 计算初始双指距离
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                lastTouchDistance = getDistance(touch1, touch2);
+            }
+        }
+
+        function handleTouchMove(e) {
+            if (isLocked) return;
+            e.preventDefault();
+
+            if (e.touches.length === 1) {
+                // 处理拖动
+                const touch = e.touches[0];
+                currentX = touch.clientX - this.startX;
+                currentY = touch.clientY - this.startY;
+                updateTransform();
+            } else if (e.touches.length === 2) {
+                // 处理缩放
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                const newDistance = getDistance(touch1, touch2);
+
+                if (lastTouchDistance && lastTouchDistance > 0) {
+                    const scale = newDistance / lastTouchDistance;
+                    currentScale *= scale;
+                    currentScale = Math.min(Math.max(1, currentScale), 5); // 限制缩放范围
+
+                    // 计算中心点偏移
+                    const center = getCenter(touch1, touch2);
+                    const diffX = (center.x - currentX) * (scale - 1);
+                    const diffY = (center.y - currentY) * (scale - 1);
+
+                    currentX -= diffX;
+                    currentY -= diffY;
+
+                    updateTransform();
+                }
+                lastTouchDistance = newDistance;
+            }
+        }
+
+        function handleTouchEnd() {
+            lastTouchDistance = null;
+            // 清除可能残留的触摸点
+            currentX = parseFloat(video.style.transform.match(/translate\(([-\d.]+)px/)?.[1] || 0);
+            currentY = parseFloat(video.style.transform.match(/translate\([-\d.]+px,\s*([-\d.]+)px/)?.[1] || 0);
+        }
+
+        function handleMouseDown(e) {
+            if (isLocked) return;
+            isDragging = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+            e.preventDefault();
+        }
+
+        function handleMouseMove(e) {
+            if (!isDragging || isLocked) return;
+            const deltaX = e.clientX - lastMouseX;
+            const deltaY = e.clientY - lastMouseY;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+
+            currentX += deltaX;
+            currentY += deltaY;
+            updateTransform();
+            e.preventDefault();
+        }
+
+        function handleMouseUp() {
+            isDragging = false;
+        }
+
+        function handleWheel(e) {
+            if (isLocked) return;
+            e.preventDefault();
+
+            const zoomSpeed = 0.1;
+            const newScale = e.deltaY < 0 ?
+                currentScale * (1 + zoomSpeed) :
+                currentScale * (1 - zoomSpeed);
+
+            const clampedScale = Math.min(Math.max(1, newScale), 5);
+            const scaleFactor = clampedScale / currentScale;
+
+            // 计算基于屏幕中心的缩放
+            const screenCenterX = window.innerWidth / 2;
+            const screenCenterY = window.innerHeight / 2;
+
+            currentX = screenCenterX - (screenCenterX - currentX) * scaleFactor;
+            currentY = screenCenterY - (screenCenterY - currentY) * scaleFactor;
+            currentScale = clampedScale;
+
+            updateTransform();
+        }
+
+        function rotateVideo(degrees) {
+            currentRotation = (currentRotation + degrees) % 360; // 旋转指定角度
+            updateTransform();
+        }
+
+        function toggleLock() {
+            isLocked = !isLocked;
+            lockBtn.classList.toggle('locked');
+            lockBtn.textContent = isLocked ? '解锁' : '锁定';
+
+            if (isLocked) {
+                // 锁定画面：将当前视频帧绘制到Canvas
+                canvas.width = video.videoWidth; // 设置Canvas分辨率为视频原始分辨率
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                // 隐藏视频，显示Canvas
+                video.style.display = 'none';
+                canvas.style.display = 'block';
+                isUsingCanvas = true;
+
+                // 同步Canvas的变换状态
+                canvas.style.transform = video.style.transform;
+            } else {
+                // 解锁画面：恢复视频显示
+                video.style.display = 'block';
+                canvas.style.display = 'none';
+                isUsingCanvas = false;
+
+                // 同步Video的变换状态
+                video.style.transform = canvas.style.transform;
+            }
+        }
+
+        function updateTransform() {
+            const target = isUsingCanvas ? canvas : video;
+            target.style.transform = `
+                translate(${currentX}px, ${currentY}px)
+                scale(${currentScale})
+                rotate(${currentRotation}deg)
+            `;
+
+            // 强制同步布局更新
+            void target.offsetHeight;
+        }
+
+        // 全屏功能
+        function enterFullscreen() {
+            if (document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen();
+            } else if (document.documentElement.mozRequestFullScreen) { // Firefox
+                document.documentElement.mozRequestFullScreen();
+            } else if (document.documentElement.webkitRequestFullscreen) { // Chrome, Safari, Opera
+                document.documentElement.webkitRequestFullscreen();
+            } else if (document.documentElement.msRequestFullscreen) { // IE/Edge
+                document.documentElement.msRequestFullscreen();
+            }
+        }
+
+        function exitFullscreen() {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.mozCancelFullScreen) { // Firefox
+                document.mozCancelFullScreen();
+            } else if (document.webkitExitFullscreen) { // Chrome, Safari, Opera
+                document.webkitExitFullscreen();
+            } else if (document.msExitFullscreen) { // IE/Edge
+                document.msExitFullscreen();
+            }
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                enterFullscreen();
+            } else {
+                exitFullscreen();
+            }
+        }
+
+        // 监听全屏状态变化
+        document.addEventListener('fullscreenchange', () => {
+            fullscreenBtn.textContent = document.fullscreenElement ? '退出全屏' : '全屏';
+        });
+
+        // 工具函数
+        function getDistance(t1, t2) {
+            return Math.hypot(
+                t2.clientX - t1.clientX,
+                t2.clientY - t1.clientY
+            );
+        }
+
+        function getCenter(t1, t2) {
+            return {
+                x: (t1.clientX + t2.clientX) / 2,
+                y: (t1.clientY + t2.clientY) / 2
+            };
+        }
+    </script>
+</body>
+</html>

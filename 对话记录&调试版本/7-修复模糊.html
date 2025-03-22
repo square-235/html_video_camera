@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频展台</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        #video-container {
+            position: fixed;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #video, #canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform-origin: center center;
+            transition: transform 0.1s ease;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #canvas {
+            display: none; /* 默认隐藏Canvas */
+        }
+
+        .toolbar {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            background: #2196F3;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:active {
+            background: #1976D2;
+        }
+
+        .locked {
+            background: #f44336 !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas> <!-- 用于定格画面 -->
+    </div>
+    <div class="toolbar">
+        <button id="rotateLeftBtn">左旋转</button>
+        <button id="rotateRightBtn">右旋转</button>
+        <button id="lockBtn">锁定</button>
+        <button id="resetBtn">复位</button>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const container = document.getElementById('video-container');
+        const rotateLeftBtn = document.getElementById('rotateLeftBtn');
+        const rotateRightBtn = document.getElementById('rotateRightBtn');
+        const lockBtn = document.getElementById('lockBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        let isLocked = false;
+        let currentScale = 1;
+        let currentX = 0;
+        let currentY = 0;
+        let currentRotation = 0;
+        let lastTouchDistance = null;
+        let isUsingCanvas = false; // 是否使用Canvas显示定格画面
+
+        // 初始化摄像头
+        navigator.mediaDevices.getUserMedia({ video: { width: 2592, height: 1944 } })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(error => {
+                console.error('无法访问摄像头:', error);
+            });
+
+        // 触摸事件处理
+        container.addEventListener('touchstart', handleTouchStart, { passive: false });
+        container.addEventListener('touchmove', handleTouchMove, { passive: false });
+        container.addEventListener('touchend', handleTouchEnd);
+
+        // 按钮事件
+        rotateLeftBtn.addEventListener('click', () => rotateVideo(-90));
+        rotateRightBtn.addEventListener('click', () => rotateVideo(90));
+        lockBtn.addEventListener('click', toggleLock);
+        resetBtn.addEventListener('click', resetTransform);
+
+        function handleTouchStart(e) {
+            if (e.touches.length === 1) {
+                // 记录初始位置
+                const touch = e.touches[0];
+                this.startX = touch.clientX - currentX;
+                this.startY = touch.clientY - currentY;
+            } else if (e.touches.length === 2) {
+                // 计算初始双指距离
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                lastTouchDistance = getDistance(touch1, touch2);
+            }
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault();
+
+            if (e.touches.length === 1) {
+                // 处理拖动
+                const touch = e.touches[0];
+                currentX = touch.clientX - this.startX;
+                currentY = touch.clientY - this.startY;
+                updateTransform();
+            } else if (e.touches.length === 2) {
+                // 处理缩放
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                const newDistance = getDistance(touch1, touch2);
+
+                if (lastTouchDistance && lastTouchDistance > 0) {
+                    const scale = newDistance / lastTouchDistance;
+                    currentScale *= scale;
+                    currentScale = Math.min(Math.max(1, currentScale), 5); // 限制缩放范围
+
+                    // 计算中心点偏移
+                    const center = getCenter(touch1, touch2);
+                    const diffX = (center.x - currentX) * (scale - 1);
+                    const diffY = (center.y - currentY) * (scale - 1);
+
+                    currentX -= diffX;
+                    currentY -= diffY;
+
+                    updateTransform();
+                }
+                lastTouchDistance = newDistance;
+            }
+        }
+
+        function handleTouchEnd() {
+            lastTouchDistance = null;
+        }
+
+        function rotateVideo(degrees) {
+            currentRotation = (currentRotation + degrees) % 360; // 旋转指定角度
+            updateTransform();
+        }
+
+        function toggleLock() {
+            isLocked = !isLocked;
+            lockBtn.classList.toggle('locked');
+            lockBtn.textContent = isLocked ? '解锁' : '锁定';
+
+            if (isLocked) {
+                // 锁定画面：将当前视频帧绘制到Canvas
+                canvas.width = video.videoWidth; // 设置Canvas分辨率为视频原始分辨率
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                // 隐藏视频，显示Canvas
+                video.style.display = 'none';
+                canvas.style.display = 'block';
+                isUsingCanvas = true;
+
+                // 同步Canvas的变换状态
+                canvas.style.transform = video.style.transform;
+            } else {
+                // 解锁画面：恢复视频显示
+                video.style.display = 'block';
+                canvas.style.display = 'none';
+                isUsingCanvas = false;
+
+                // 同步Video的变换状态
+                video.style.transform = canvas.style.transform;
+            }
+        }
+
+        function resetTransform() {
+            // 复位：居中并重置缩放
+            currentScale = 1;
+            currentX = 0;
+            currentY = 0;
+            updateTransform();
+        }
+
+        function updateTransform() {
+            const target = isUsingCanvas ? canvas : video;
+            target.style.transform = `
+                translate(${currentX}px, ${currentY}px)
+                scale(${currentScale})
+                rotate(${currentRotation}deg)
+            `;
+        }
+
+        // 工具函数
+        function getDistance(t1, t2) {
+            return Math.hypot(
+                t2.clientX - t1.clientX,
+                t2.clientY - t1.clientY
+            );
+        }
+
+        function getCenter(t1, t2) {
+            return {
+                x: (t1.clientX + t2.clientX) / 2,
+                y: (t1.clientY + t2.clientY) / 2
+            };
+        }
+    </script>
+</body>
+</html>

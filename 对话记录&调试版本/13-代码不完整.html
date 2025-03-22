@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频展台</title>
+    <style>
+        /* 原有样式保持不变 */
+    </style>
+</head>
+<body>
+    <!-- 原有HTML结构保持不变 -->
+
+    <script>
+        // 原有变量声明保持不变
+
+        // 新增鼠标事件相关变量
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+
+        // 初始化摄像头（保持不变）
+
+        // 新增鼠标事件监听
+        container.addEventListener('mousedown', handleMouseDown);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        container.addEventListener('wheel', handleWheel, { passive: false });
+
+        // 修改后的触摸事件处理函数
+        function handleTouchStart(e) {
+            if (isLocked) return;
+            // 原有逻辑保持不变
+        }
+
+        function handleTouchMove(e) {
+            if (isLocked) return;
+            // 原有逻辑保持不变
+        }
+
+        // 新增鼠标处理函数
+        function handleMouseDown(e) {
+            if (isLocked) return;
+            isDragging = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+            e.preventDefault();
+        }
+
+        function handleMouseMove(e) {
+            if (!isDragging || isLocked) return;
+            const deltaX = e.clientX - lastMouseX;
+            const deltaY = e.clientY - lastMouseY;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+
+            currentX += deltaX;
+            currentY += deltaY;
+            updateTransform();
+            e.preventDefault();
+        }
+
+        function handleMouseUp() {
+            isDragging = false;
+        }
+
+        function handleWheel(e) {
+            if (isLocked) return;
+            e.preventDefault();
+
+            const rect = container.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const zoomSpeed = 0.1;
+            const newScale = e.deltaY < 0 ?
+                currentScale * (1 + zoomSpeed) :
+                currentScale * (1 - zoomSpeed);
+
+            const clampedScale = Math.min(Math.max(1, newScale), 5);
+            const scaleFactor = clampedScale / currentScale;
+
+            // 计算基于鼠标位置的缩放
+            currentX = mouseX - (mouseX - currentX) * scaleFactor;
+            currentY = mouseY - (mouseY - currentY) * scaleFactor;
+            currentScale = clampedScale;
+
+            updateTransform();
+        }
+
+        // 优化后的更新函数
+        function updateTransform() {
+            const target = isUsingCanvas ? canvas : video;
+            target.style.transform = `
+                translate(${currentX}px, ${currentY}px)
+                scale(${currentScale})
+                rotate(${currentRotation}deg)
+            `;
+
+            // 强制同步布局更新
+            void target.offsetHeight;
+        }
+
+        // 其他函数保持不变
+
+        // 新增卡顿问题修复措施
+        function handleTouchEnd() {
+            lastTouchDistance = null;
+            // 清除可能残留的触摸点
+            currentX = parseFloat(video.style.transform.match(/translate\(([-\d.]+)px/)?.[1] || 0);
+            currentY = parseFloat(video.style.transform.match(/translate\([-\d.]+px,\s*([-\d.]+)px/)?.[1] || 0);
+        }
+
+        // 复位函数增加状态重置
+        function resetTransform() {
+            currentScale = 1;
+            currentX = 0;
+            currentY = 0;
+            currentRotation = 0;
+            updateTransform();
+        }
+    </script>
+</body>
+</html>
